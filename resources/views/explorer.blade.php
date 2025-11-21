@@ -61,6 +61,63 @@
     };
   }
 
+  // NUEVO: generar series por dispositivo y telemetría
+  function generateSeriesByDevice(devices, telemetry, start, end, intervalMs) {
+    const labels = [];
+    for (let t = start.getTime(); t <= end.getTime(); t += intervalMs) {
+      labels.push(new Date(t));
+    }
+    const datasets = devices.map((d, i) => {
+      const data = labels.map(() => {
+        if (telemetry.data_type === 'boolean') return Math.random() < 0.5 ? 0 : 1;
+        const min = telemetry.min ?? 0;
+        const max = telemetry.max ?? 100;
+        let v = min + Math.random() * (max - min);
+        if (telemetry.data_type === 'float') v = parseFloat(v.toFixed(telemetry.decimals ?? 2));
+        else v = Math.round(v);
+        return v;
+      });
+      return {
+        label: `${d.name} - ${telemetry.name}`,
+        data,
+        borderColor: palette[i % palette.length],
+        tension: 0.25
+      };
+    });
+    return { labels: labels.map(formatDate), datasets };
+  }
+
+  function generateSeriesForDevicesAndTelemetries(devices, telemetries, start, end, intervalMs) {
+    if (telemetries.length === 1) {
+      return generateSeriesByDevice(devices, telemetries[0], start, end, intervalMs);
+    }
+    const labels = [];
+    for (let t = start.getTime(); t <= end.getTime(); t += intervalMs) {
+      labels.push(new Date(t));
+    }
+    const datasets = [];
+    telemetries.forEach((telemetry, tIndex) => {
+      devices.forEach((d, dIndex) => {
+        const data = labels.map(() => {
+          if (telemetry.data_type === 'boolean') return Math.random() < 0.5 ? 0 : 1;
+          const min = telemetry.min ?? 0;
+          const max = telemetry.max ?? 100;
+          let v = min + Math.random() * (max - min);
+          if (telemetry.data_type === 'float') v = parseFloat(v.toFixed(telemetry.decimals ?? 2));
+          else v = Math.round(v);
+          return v;
+        });
+        datasets.push({
+          label: `${d.name} - ${telemetry.name}`,
+          data,
+          borderColor: palette[(dIndex + tIndex) % palette.length],
+          tension: 0.25
+        });
+      });
+    });
+    return { labels: labels.map(formatDate), datasets };
+  }
+
   function updateDependentSelects() {
     const tmplSel = document.getElementById('template_id');
     const devSel = document.getElementById('device_ids');
@@ -81,6 +138,21 @@
       opt.textContent = `${t.name} (${t.data_type})`;
       telSel.appendChild(opt);
     });
+
+    // NUEVO: si la plantilla es de "Botón de Pánico", preseleccionar dispositivos y la telemetría relacionada
+    if (meta && /bot(ó|o)n|panic|panic(o|ó)|pánic|panico|pánico/i.test(meta.name)) {
+      Array.from(devSel.options).forEach(o => o.selected = true);
+      let matchIndex = -1;
+      meta.telemetries.forEach((t, idx) => {
+        const name = (t.name || '').toLowerCase();
+        if (name.includes('boton') || name.includes('botón') || name.includes('panic') || name.includes('panico') || name.includes('pánico')) {
+          matchIndex = idx;
+        }
+      });
+      if (matchIndex >= 0) {
+        Array.from(telSel.options).forEach((o, idx) => o.selected = (idx === matchIndex));
+      }
+    }
   }
 
   function selectAll(id) {
@@ -111,10 +183,14 @@
   function onSubmit(e) {
     e.preventDefault();
     const tmplId = parseInt(document.getElementById('template_id').value);
+    const devSel = document.getElementById('device_ids');
     const telSel = document.getElementById('telemetry_ids');
+    const selectedDeviceIds = Array.from(devSel.selectedOptions).map(o => parseInt(o.value));
     const selectedTelemetryIds = Array.from(telSel.selectedOptions).map(o => parseInt(o.value));
     const meta = window.templatesMeta.find(t => t.id === tmplId);
     const telemetries = meta.telemetries.filter(t => selectedTelemetryIds.includes(t.id));
+    const allDevices = window.devicesByTemplate[tmplId] || [];
+    const devices = allDevices.filter(d => selectedDeviceIds.length ? selectedDeviceIds.includes(d.id) : true);
     const startStr = document.getElementById('start').value;
     const endStr = document.getElementById('end').value;
     const intervalStr = document.getElementById('interval').value;
@@ -128,7 +204,9 @@
       start = safeParseLocalDateTime(startStr) || new Date(Date.now() - 24*60*60*1000);
       end = safeParseLocalDateTime(endStr) || new Date();
     }
-    const data = generateSeries(telemetries, start, end, parseInterval(intervalStr));
+
+    // NUEVO: generar datos por dispositivo y telemetría
+    const data = generateSeriesForDevicesAndTelemetries(devices, telemetries, start, end, parseInterval(intervalStr));
     const ctx = document.getElementById('explorerChart').getContext('2d');
     if (window.explorerChart && typeof window.explorerChart.destroy === 'function') {
       window.explorerChart.destroy();
